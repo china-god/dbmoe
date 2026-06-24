@@ -18,6 +18,11 @@ def get_resource_path(relative_path):
         base_path = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_path, relative_path)
 
+# ⚠ Config 必须在所有 kivy 导入之前设置，否则窗口大小设置不生效
+from kivy.config import Config
+Config.set('graphics', 'width', '1000')
+Config.set('graphics', 'height', '600')
+
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -704,31 +709,42 @@ class MangaDownloaderApp(App):
         if os.path.exists(icon_path):
             Window.set_icon(icon_path)
         
-        # 先显示启动画面
-        splash_path = get_resource_path('presplash.png')
+        # 使用 FloatLayout 作为根布局，支持组件叠加
+        from kivy.uix.floatlayout import FloatLayout
+        root = FloatLayout()
         
-        if os.path.exists(splash_path):
-            # 创建启动画面布局
-            self.splash_layout = BoxLayout(orientation='vertical')
-            splash_img = KivyImage(
-                source=splash_path,
-                fit_mode='contain',
-                size_hint=(1, 1)
-            )
-            self.splash_layout.add_widget(splash_img)
-            
-            # 延迟2秒后加载主界面
-            Clock.schedule_once(self.load_main_ui, 2)
-            return self.splash_layout
-        else:
-            # 如果没有splash图片，直接加载主界面
-            return MangaDownloader()
-    
-    def load_main_ui(self, dt):
-        """加载主界面"""
-        self.root.clear_widgets()
+        # 先加载主界面（作为底层）
         self.main_widget = MangaDownloader()
-        self.root.add_widget(self.main_widget)
+        root.add_widget(self.main_widget)
+        
+        # 在顶层叠加启动画面
+        splash_path = get_resource_path('presplash.png')
+        if os.path.exists(splash_path):
+            # 同步加载纹理，避免 exe 中异步加载导致一闪而过
+            splash_img = KivyImage(fit_mode='fill', size_hint=(1, 1), keep_ratio=False, allow_stretch=True)
+            try:
+                pil_img = Image.open(splash_path)
+                if pil_img.mode != 'RGBA':
+                    pil_img = pil_img.convert('RGBA')
+                texture = Texture.create(size=pil_img.size, colorfmt='rgba')
+                texture.blit_buffer(pil_img.tobytes(), colorfmt='rgba', bufferfmt='ubyte')
+                texture.flip_vertical()
+                splash_img.texture = texture
+            except Exception:
+                splash_img.source = splash_path
+            
+            self.splash_widget = splash_img
+            root.add_widget(self.splash_widget)
+            
+            # 加载完所有组件后3秒取消开场图片
+            Clock.schedule_once(self.remove_splash, 3)
+        
+        return root
+    
+    def remove_splash(self, dt):
+        """移除启动画面"""
+        if hasattr(self, 'splash_widget') and self.splash_widget.parent:
+            self.splash_widget.parent.remove_widget(self.splash_widget)
 
 if __name__ == '__main__':
     MangaDownloaderApp().run()
